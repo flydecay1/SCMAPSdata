@@ -1,0 +1,89 @@
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import openai
+import requests
+from bs4 import BeautifulSoup
+import json
+
+# Constants
+GOOGLE_API_SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+ZOTERO_API_URL = "https://api.zotero.org/users/YOUR_USER_ID/items"
+ZOTERO_HEADERS = {
+    "Authorization": "Bearer YOUR_ZOTERO_API_KEY",
+    "Content-Type": "application/json"
+}
+SPREADSHEET_ID = "1_DE2J47_X5mOjgQWVqS5V-uzuWeKpFNz1S2B-E5yU-8"
+RANGE_NAME = "Sheet1!A2:A"
+
+# Google Sheets setup
+def fetch_product_names(spreadsheet_id, range_name):
+    creds = ServiceAccountCredentials.from_json_keyfile_name("path/to/credentials.json", GOOGLE_API_SCOPE)
+    client = gspread.authorize(creds)
+    sheet = client.open_by_key(spreadsheet_id)
+    data = sheet.values_get(range_name)['values']
+    return [row[0] for row in data]
+
+# ChatGPT interaction
+def get_course_info(product_name):
+    openai.api_key = 'OpenAiKey'
+    prompt = f"Golf Course Data Collection: {product_name}"
+    response = openai.Completion.create(engine="text-davinci-003", prompt=prompt, max_tokens=150)
+    return response.choices[0].text
+
+# Zotero integration
+def create_zotero_dataset(title, notes, links, tags):
+    payload = {
+        "title": title,
+        "itemType": "journalArticle",
+        "notes": notes,
+        "tags": tags,
+        "attachments": links
+    }
+    response = requests.post(ZOTERO_API_URL, headers=ZOTERO_HEADERS, data=json.dumps(payload))
+    return response.json()
+
+# Scraping GolfPass
+def get_golfpass_images(course_name):
+    search_url = f"https://www.golfpass.com/search?q={course_name.replace(' ', '+')}"
+    response = requests.get(search_url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    satellite_image = soup.find('img', {'class': 'satellite-image-class'})['src']
+    scorecard_image = soup.find('img', {'class': 'scorecard-image-class'})['src']
+    return satellite_image, scorecard_image
+
+# OpenStreetMaps data availability
+def check_osm_data(course_name):
+    osm_url = f"https://nominatim.openstreetmap.org/search?q={course_name.replace(' ', '+')}&format=json"
+    response = requests.get(osm_url)
+    data = response.json()
+    return "None" if len(data) == 0 else "25%"
+
+# Main function
+def main():
+    product_names = fetch_product_names(SPREADSHEET_ID, RANGE_NAME)
+
+    for product_name in product_names:
+        course_info = get_course_info(product_name)
+        satellite_image, scorecard_image = get_golfpass_images(product_name)
+        osm_data = check_osm_data(product_name)
+
+        # Parsing the course information
+        course_details = course_info.split('\n')
+        title = f"GEM \"X\", {course_details[0]}, {course_details[1]}, {course_details[2]}"
+        notes = f"{course_details[0]} Information:\nNaming Issues: N/A\nLocation: {course_details[1]}, {course_details[2]}\nHoles #: 18\nArchitect(s): {course_details[3]}\nYear Established: {course_details[4]}\nRedesigns: N/A\nData Available: TBA\nOther: {course_details[5]}"
+
+        links = [
+            {"linkMode": "linked_file", "title": "Satellite Image", "url": satellite_image},
+            {"linkMode": "linked_file", "title": "Scorecard Image", "url": scorecard_image}
+        ]
+
+        tags = [
+            {"tag": "State"},
+            {"tag": "Golf"},
+            {"tag": "Complete"}
+        ]
+
+        create_zotero_dataset(title, notes, links, tags)
+
+if __name__ == "__main__":
+    main()
